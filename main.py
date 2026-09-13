@@ -5,6 +5,10 @@ import akshare as ak
 from openai import OpenAI
 
 # 初始化 OpenAI 客户端 (适配 DeepSeek API)
+import os
+from openai import OpenAI
+
+# 明确读取 DEEPSEEK_API_KEY，并设置 DeepSeek 官方的 base_url
 client = OpenAI(
     api_key=os.environ.get("DEEPSEEK_API_KEY"),
     base_url="https://api.deepseek.com"
