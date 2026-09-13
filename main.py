@@ -62,20 +62,23 @@ def generate_scenarios(market_data):
     
     以及你对近期 A 股最新热点（行业板块、高关注度个股与主要指数）的了解，请选出 5 个最值得关注的 [股票·指数·板块]，并为你选出的标的生成交易情景。
     
-    请严格按照以下 JSON 数组格式输出，绝对不要带有任何 Markdown 代码块标记（不要写 ```json ）：
-    [
-      {{
-        "type": "股票/指数/板块",
-        "name": "标的名称",
-        "code": "代码或标识",
-        "entry_price": "入场参考价或区间",
-        "target_price": "目标价",
-        "stop_loss_price": "止损价",
-        "rr_ratio": "盈亏比 (如 1:2.5)",
-        "technical_basis": "技术面依据说明",
-        "fundamental_basis": "基本面及催化剂依据"
-      }}
-    ]
+    请严格按照以下 JSON 格式输出（外层包含 summary 和 details），绝对不要带有任何 Markdown 代码块标记（不要写 ```json ）：
+    {{
+      "summary": "简短的大盘复盘与整体操作建议总结",
+      "details": [
+        {{
+          "type": "股票/指数/板块",
+          "name": "标的名称",
+          "code": "代码或标识",
+          "entry_price": "入场参考价或区间",
+          "target_price": "目标价",
+          "stop_loss_price": "止损价",
+          "rr_ratio": "盈亏比 (如 1:2.5)",
+          "technical_basis": "技术面依据说明",
+          "fundamental_basis": "基本面及催化剂依据"
+        }}
+      ]
+    }}
     """
     
     try:
@@ -101,13 +104,57 @@ if __name__ == "__main__":
         if scenarios_json_str:
             os.makedirs("data", exist_ok=True)
             
-            today_str = datetime.datetime.now().strftime("%Y%m%d")
-            file_path = f"data/{today_str}.json"
+            today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+            file_name = f"{today_str}.json"
+            file_path = f"data/{file_name}"
             
+            # 1. 解析 AI 返回的 JSON 内容
+            try:
+                parsed_json = json.loads(scenarios_json_str)
+                # 加上 date 字段方便前端直接展示
+                if isinstance(parsed_json, dict):
+                    parsed_json["date"] = today_str
+            except Exception as e:
+                print(f"⚠️ JSON 解析失败，将直接保存原始文本: {e}")
+                parsed_json = scenarios_json_str
+            
+            # 2. 保存当日数据 (例如 data/2026-09-13.json)
             with open(file_path, "w", encoding="utf-8") as f:
-                f.write(scenarios_json_str)
+                if isinstance(parsed_json, dict):
+                    json.dump(parsed_json, f, ensure_ascii=False, indent=2)
+                else:
+                    f.write(scenarios_json_str)
                 
+            # 3. 兼容保存 daily_analysis.json 与 latest.json
+            with open("data/daily_analysis.json", "w", encoding="utf-8") as f:
+                if isinstance(parsed_json, dict):
+                    json.dump(parsed_json, f, ensure_ascii=False, indent=2)
+                else:
+                    f.write(scenarios_json_str)
+
             with open("data/latest.json", "w", encoding="utf-8") as f:
-                f.write(scenarios_json_str)
+                if isinstance(parsed_json, dict):
+                    json.dump(parsed_json, f, ensure_ascii=False, indent=2)
+                else:
+                    f.write(scenarios_json_str)
+
+            # 4. 自动维护历史索引 index.json（供微信小程序横向滑动菜单使用）
+            index_path = "data/index.json"
+            history_list = []
+
+            if os.path.exists(index_path):
+                try:
+                    with open(index_path, "r", encoding="utf-8") as f:
+                        history_list = json.load(f)
+                except Exception:
+                    history_list = []
+
+            new_entry = {"date": today_str, "file": file_name}
+            # 如果今天的数据不在索引里，插入到最新位置
+            if not any(item.get("date") == today_str for item in history_list):
+                history_list.insert(0, new_entry)
+
+            with open(index_path, "w", encoding="utf-8") as f:
+                json.dump(history_list, f, ensure_ascii=False, indent=2)
                 
-            print(f"✅ 成功生成并保存每日交易情景至 {file_path} 与 data/latest.json")
+            print(f"✅ 成功保存当日数据及索引 index.json 至 data/ 目录！")
