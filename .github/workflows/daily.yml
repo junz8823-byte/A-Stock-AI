@@ -20,12 +20,13 @@ jobs:
 
       - name: 安装依赖
         run: |
-          pip install akshare openai requests
+          python -m pip install --upgrade pip
+          pip install baostock pandas openai
 
       - name: 运行 AI 分析脚本
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_BASE_URL: "[https://api.deepseek.com](https://api.deepseek.com)"
+          OPENAI_BASE_URL: "https://api.deepseek.com"
         run: |
           python main.py
 
