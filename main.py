@@ -57,25 +57,25 @@ def generate_scenarios(market_data):
     client = OpenAI(api_key=api_key, base_url=base_url)
     
     prompt = f"""
-    你是一名资深的 A 股分析师。结合提供的今日大盘收盘数据：
+    你是一名资深的 A 股市场数据分析师。结合提供的今日大盘收盘数据：
     {json.dumps(market_data, ensure_ascii=False)}
     
-    以及你对近期 A 股最新热点（行业板块、高关注度个股与主要指数）的了解，请选出 5 个最值得关注的 [股票·指数·板块]，并为你选出的标的生成交易情景。
+    请选出 5 个近期市场关注度较高的 [股票·指数·板块]，并为你选出的标的提供客观的技术面与基本面数据分析。
     
-    请严格按照以下 JSON 格式输出（外层包含 summary 和 details），绝对不要带有任何 Markdown 代码块标记（不要写 ```json ）：
+    请严格按照以下 JSON 格式输出，绝对不要带有任何 Markdown 代码块标记（不要写 ```json ）：
     {{
-      "summary": "简短的大盘复盘与整体操作建议总结",
+      "summary": "今日大盘行情客观复盘与市场动向总结",
       "details": [
         {{
           "type": "股票/指数/板块",
           "name": "标的名称",
           "code": "代码或标识",
-          "entry_price": "入场参考价或区间",
-          "target_price": "目标价",
-          "stop_loss_price": "止损价",
-          "rr_ratio": "盈亏比 (如 1:2.5)",
-          "technical_basis": "技术面依据说明",
-          "fundamental_basis": "基本面及催化剂依据"
+          "entry_price": "技术观察区间",
+          "target_price": "压力参考位",
+          "stop_loss_price": "支撑参考位",
+          "rr_ratio": "波动空间比",
+          "technical_basis": "技术走势分析",
+          "fundamental_basis": "基本面及行业动态"
         }}
       ]
     }}
@@ -111,14 +111,13 @@ if __name__ == "__main__":
             # 1. 解析 AI 返回的 JSON 内容
             try:
                 parsed_json = json.loads(scenarios_json_str)
-                # 加上 date 字段方便前端直接展示
                 if isinstance(parsed_json, dict):
                     parsed_json["date"] = today_str
             except Exception as e:
                 print(f"⚠️ JSON 解析失败，将直接保存原始文本: {e}")
                 parsed_json = scenarios_json_str
             
-            # 2. 保存当日数据 (例如 data/2026-09-13.json)
+            # 2. 保存当日数据
             with open(file_path, "w", encoding="utf-8") as f:
                 if isinstance(parsed_json, dict):
                     json.dump(parsed_json, f, ensure_ascii=False, indent=2)
@@ -138,7 +137,7 @@ if __name__ == "__main__":
                 else:
                     f.write(scenarios_json_str)
 
-            # 4. 自动维护历史索引 index.json（供微信小程序横向滑动菜单使用）
+            # 4. 自动维护历史索引 index.json
             index_path = "data/index.json"
             history_list = []
 
@@ -150,7 +149,6 @@ if __name__ == "__main__":
                     history_list = []
 
             new_entry = {"date": today_str, "file": file_name}
-            # 如果今天的数据不在索引里，插入到最新位置
             if not any(item.get("date") == today_str for item in history_list):
                 history_list.insert(0, new_entry)
 
