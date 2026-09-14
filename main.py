@@ -1,40 +1,47 @@
 import os
 import json
+import time
 import requests
 import datetime
 
 # ---------------------------------------------------------
-# 1. 全量数据抓取模块（东方财富原生 REST 接口）
+# 1. 全量数据抓取模块（实时接口 + 防缓存时间戳 + 10大反弹标的候选）
 # ---------------------------------------------------------
 def fetch_market_data():
+    # 1. 动态生成防缓存时间戳（规避 CDN 滞后数据）
+    now_ts = int(time.time() * 1000)
+    
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://quote.eastmoney.com/",
+        "Cache-Control": "no-cache"
     }
     
     market_summary = {
-        "date": datetime.datetime.now().strftime("%Y-%m-%d"),
+        "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "sh_index": {},
         "market_stats": {},
-        "hot_sectors": []
+        "hot_sectors": [],
+        "rebound_candidates": []
     }
 
     try:
-        # 1. 抓取主要指数（上证、深证、创业板）
-        index_url = "https://push2.eastmoney.com/api/qt/ulist/get?fltt=2&invt=2&fields=f2,f3,f4,f12,f14,f48&secids=1.000001,0.399001,0.399006"
+        # 2. 抓取主要指数（上证、深证、创业板）
+        index_url = f"https://push2.eastmoney.com/api/qt/ulist/get?fltt=2&invt=2&fields=f2,f3,f4,f12,f14,f48,f124&secids=1.000001,0.399001,0.399006&_={now_ts}"
         res = requests.get(index_url, headers=headers, timeout=10).json()
         diff = res.get("data", {}).get("diff", [])
         indices = {}
         for item in diff:
             name = item.get("f14")
             indices[name] = {
-                "latest": item.get("f2", 0) / 100,
+                "latest": item.get("f2", 0) / 100 if item.get("f2") != "-" else 0,
                 "change_pct": f"{item.get('f3', 0) / 100}%",
                 "turnover": f"{round(item.get('f48', 0) / 100000000, 2)}亿"
             }
         market_summary["sh_index"] = indices
 
-        # 2. 抓取全市场涨跌统计（涨家数、跌家数、平盘）
-        stat_url = "https://push2.eastmoney.com/api/qt/ulist/get?fltt=2&invt=2&fields=f104,f105,f106&secids=1.000001"
+        # 3. 抓取全市场实时涨跌家数
+        stat_url = f"https://push2.eastmoney.com/api/qt/ulist/get?fltt=2&invt=2&fields=f104,f105,f106&secids=1.000001&_={now_ts}"
         stat_res = requests.get(stat_url, headers=headers, timeout=10).json()
         stat_data = stat_res.get("data", {}).get("diff", [{}])[0]
         market_summary["market_stats"] = {
@@ -43,8 +50,8 @@ def fetch_market_data():
             "flat_count": stat_data.get("f106", 0)
         }
 
-        # 3. 抓取今日行业板块涨幅 Top 5（行业热点）
-        sector_url = "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=5&po=1&np=1&ut=bd1d9beb23081e7d01a3556f8f7eb48d&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f3,f12,f14,f62,f184"
+        # 4. 抓取今日行业板块涨幅 Top 5
+        sector_url = f"https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=5&po=1&np=1&ut=bd1d9beb23081e7d01a3556f8f7eb48d&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f3,f12,f14,f62&_={now_ts}"
         sector_res = requests.get(sector_url, headers=headers, timeout=10).json()
         sector_diff = sector_res.get("data", {}).get("diff", [])
         for sec in sector_diff:
@@ -54,13 +61,27 @@ def fetch_market_data():
                 "net_inflow": f"{round(sec.get('f62', 0) / 100000000, 2)}亿"
             })
 
+        # 5. 抓取【主力资金净流入前20】的筑底反弹备选标的，供 AI 精选 10 个
+        rebound_url = f"https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=20&po=1&np=1&ut=bd1d9beb23081e7d01a3556f8f7eb48d&fltt=2&invt=2&fid=f62&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f2,f3,f8,f62,f184&_={now_ts}"
+        rebound_res = requests.get(rebound_url, headers=headers, timeout=10).json()
+        rebound_diff = rebound_res.get("data", {}).get("diff", [])
+        for stock in rebound_diff:
+            market_summary["rebound_candidates"].append({
+                "code": stock.get("f12"),
+                "name": stock.get("f14"),
+                "price": stock.get("f2", 0) / 100 if stock.get("f2") != "-" else 0,
+                "change_pct": round(stock.get("f3", 0) / 100, 2),
+                "turnover_rate": f"{stock.get('f8', 0) / 100}%",
+                "net_inflow": f"{round(stock.get('f62', 0) / 100000000, 2)}亿"
+            })
+
     except Exception as e:
-        print(f"数据抓取出现部分异常（降级处理）: {e}")
+        print(f"数据抓取出现异常: {e}")
 
     return market_summary
 
 # ---------------------------------------------------------
-# 2. AI 提示词与分析模块（输出 6 大模块 JSON）
+# 2. AI 提示词与分析模块（输出 10 个筑底反弹标的及 JSON 结构）
 # ---------------------------------------------------------
 def generate_ai_analysis(market_data):
     api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -71,8 +92,11 @@ def generate_ai_analysis(market_data):
     prompt = f"""
 你是一名专业的 A 股短线顶级游资与量化交易专家。请根据今日 market_data: {json.dumps(market_data, ensure_ascii=False)} 结合你对今日真实 A 股盘面的了解，对今日市场进行深度复盘。
 
+【特别指示】
+请重点参考 rebound_candidates 候选池数据，精选出 **10 个具备筑底/超跌反弹/主力突破特征** 的重点标的，填入 `bottom_rebound_10` 数组中。
+
 【严格要求】
-必须且仅输出标准的合法 JSON，绝对不要包含 ```json 等 Markdown 标记，JSON 结构必须严格包含以下 6 个模块：
+必须且仅输出标准的合法 JSON，绝对不要包含 ```json 等 Markdown 标记，JSON 结构必须严格包含以下模块：
 
 {{
   "1_market_overview": {{
@@ -95,31 +119,22 @@ def generate_ai_analysis(market_data):
       "today_gain": "涨幅 %",
       "turnover": "成交额",
       "net_inflow": "资金净流入",
-      "dragon_leader": "龙头股",
-      "core_mid_army": "中军股",
-      "follow_up_tier": "补装/梯队股"
+      "dragon_leader": "龙头股"
     }}
   ],
-  "4_stock_selection": {{
-    "strong_trend": ["强趋势股1", "强趋势股2"],
-    "volume_breakthrough": ["放量突破股1"],
-    "first_second_board": ["首板/二板潜力股"],
-    "pullback_low_buy": ["回踩低吸标的"],
-    "oversold_rebound": ["超跌反弹标的"]
-  }},
-  "5_news_events": {{
-    "policy": ["重要政策1"],
-    "company_announcements": ["公司重磅公告"],
-    "earnings": ["业绩预告/财报炒作"],
-    "industry_news": ["行业利好消息"],
-    "overseas_market": ["隔夜美股/外盘动态"]
-  }},
+  "bottom_rebound_10": [
+    {{
+      "name": "股票名称",
+      "code": "代码(如600519.SH)",
+      "change": 2.45,
+      "reason": "简短AI反弹逻辑观点(20字以内)"
+    }}
+  ],
   "6_next_day_strategy": {{
     "strongest_direction": "次日最强主线方向",
     "watch_stocks": ["重点观察股票代码/名称"],
     "buy_conditions": "介入必须满足的确认条件",
     "stop_loss": "止损位参考",
-    "take_profit": "止盈位参考",
     "risk_warning": "明确风险提示"
   }}
 }}
@@ -140,6 +155,7 @@ def generate_ai_analysis(market_data):
     }
 
     try:
+        # 正确的标准接口 URL
         url = "[https://api.deepseek.com/chat/completions](https://api.deepseek.com/chat/completions)"
         res = requests.post(url, headers=headers, json=payload, timeout=60)
         res_json = res.json()
@@ -158,13 +174,13 @@ def generate_ai_analysis(market_data):
         return None
 
 # ---------------------------------------------------------
-# 3. 主流程与文件写入
+# 3. 主流程与本地文件保存
 # ---------------------------------------------------------
 def main():
-    print("1. 开始抓取市场基础行情数据...")
+    print("1. 开始抓取实时行情数据（含防缓存及反弹标的候选）...")
     raw_data = fetch_market_data()
     
-    print("2. 正在调用 DeepSeek 进行 6 大模块复盘分析...")
+    print("2. 正在调用 DeepSeek 生成 10 大筑底反弹标的与复盘...")
     ai_result = generate_ai_analysis(raw_data)
     
     if not ai_result:
@@ -180,7 +196,7 @@ def main():
     with open("data/latest.json", "w", encoding="utf-8") as f:
         json.dump(ai_result, f, ensure_ascii=False, indent=2)
         
-    print(f"成功保存至 data/{today_str}.json")
+    print(f"成功更新并保存至 data/latest.json 及 data/{today_str}.json")
 
 if __name__ == "__main__":
     main()
