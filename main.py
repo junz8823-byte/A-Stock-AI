@@ -1,130 +1,120 @@
+import os
 import json
-import os
-from datetime import datetime, timedelta
-import akshare as ak
-from openai import OpenAI
+import requests
+import datetime
 
-# 初始化 OpenAI 客户端 (适配 DeepSeek API)
-import os
-from openai import OpenAI
-
-# 明确读取 DEEPSEEK_API_KEY，并设置 DeepSeek 官方的 base_url
-client = OpenAI(
-    api_key=os.environ.get("DEEPSEEK_API_KEY"),
-    base_url="https://api.deepseek.com"
-)
-
-# 1. 抓取大盘及热点数据（具备休市自动追溯逻辑）
+# ---------------------------------------------------------
+# 1. 数据抓取模块（直接调用东方财富官方 REST 接口，保证稳定）
+# ---------------------------------------------------------
 def fetch_market_data():
-    print("开始抓取大盘及市场行情数据...")
-    
-    today = datetime.now()
-    trade_date = None
-    df_sh = None
-
-    # 最多向前追溯 10 天，寻找最近的一个有效交易日数据
-    for i in range(10):
-        target_date = today - timedelta(days=i)
-        date_str = target_date.strftime("%Y%m%d")
-        try:
-            # 尝试抓取指定日期的上证指数日 K 线
-            df_sh = ak.stock_zh_index_daily_em(symbol="sh000001", start_date=date_str, end_date=date_str)
-            if not df_sh.empty:
-                trade_date = date_str
-                print(f"成功获取到交易日 ({trade_date}) 的行情数据")
-                break
-        except Exception as e:
-            continue
-
-    if df_sh is None or df_sh.empty:
-        print("警告：未能获取到近期有效的交易日大盘数据")
-        return {"date": today.strftime("%Y-%m-%d"), "index_summary": {}}
-
-    # 解析最新交易日上证指数的核心指标
-    latest_row = df_sh.iloc[-1]
-    close_price = float(latest_row['close'])
-    open_price = float(latest_row['open'])
-    change_pct = round(((close_price - open_price) / open_price) * 100, 2)
-    volume = float(latest_row['volume'])
-
-    market_data = {
-        "date": today.strftime("%Y-%m-%d"),
-        "trade_date": f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}",
-        "index_summary": {
-            "name": "上证指数",
-            "close": close_price,
-            "change_pct": change_pct,
-            "volume": volume
-        }
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     
-    return market_data
-
-
-# 2. 调用 DeepSeek 进行 AI 复盘分析
-def generate_ai_analysis(market_data):
-    today_str = market_data["date"]
-    prompt = f"""
-    你是一个客观专业的 A 股数据分析助手。请根据以下大盘数据进行复盘分析，并输出纯 JSON 格式数据。
-    
-    传入的数据：{json.dumps(market_data, ensure_ascii=False)}
-
-    严格要求：
-    1. 必须包含免责声明和合规表述（不得涉及具体个股买卖建议或承诺收益）。
-    2. 如果传入的数据包含指数最新价和涨跌幅，请直接基于该真实数据进行精准总结，严禁在 market_summary 中输出“指数摘要为空”或“无法获取数据”等字眼！
-    3. 输出格式必须为合法的 JSON，严格按照如下结构：
-    {{
-      "date": "{today_str}",
-      "disclaimer": "免责声明：本小程序所有数据及 AI 分析内容均基于公开市场数据自动生成，仅供技术研究与信息交流参考，不构成任何投资建议或依据。股市有风险，入市需谨慎。",
-      "market_summary": "这里直接填写大盘复盘总结（根据传入的真实点位和涨跌幅分析）",
-      "hot_spots": [
-        {{
-          "name": "板块/指数名称",
-          "code": "代码",
-          "tag": "指数/板块/股票",
-          "range": "观察区区间",
-          "resistance": "压力位",
-          "support": "支撑位",
-          "tech_feature": "技术特征描述",
-          "fundamental": "基本面/消息面描述"
-        }}
-      ]
-    }}
-    """
-
-    print("正在请求 DeepSeek AI 进行分析...")
-    response = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-        temperature=0.3
-    )
-
-    return response.choices[0].message.content
-
-
-# 3. 主函数：抓取数据 -> 调用 AI -> 写入 JSON 文件
-def main():
+    # 获取上证指数行情
+    sh_index_url = "https://push2.eastmoney.com/api/qt/stock/get?secid=1.000001&fields=f43,f169,f170,f60,f44,f45,f46,f47,f48"
     try:
-        # 抓取数据
-        market_data = fetch_market_data()
-        
-        # AI 分析
-        ai_result_json = generate_ai_analysis(market_data)
-        
-        # 校验 JSON 格式
-        parsed_data = json.loads(ai_result_json)
-        
-        # 保存为 daily_data.json
-        output_path = "daily_data.json"
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(parsed_data, f, ensure_ascii=False, indent=2)
-            
-        print(f"数据更新完成，已成功写入 {output_path}")
+        sh_res = requests.get(sh_index_url, headers=headers, timeout=10).json()
+        sh_data = sh_res.get("data", {})
+    except Exception:
+        sh_data = {}
+    
+    market_summary = {
+        "date": datetime.datetime.now().strftime("%Y-%m-%d"),
+        "sh_index": {
+            "price": sh_data.get("f43", 0) / 100 if sh_data else "N/A",
+            "change_pct": sh_data.get("f170", 0) / 100 if sh_data else "N/A",
+            "turnover": f"{round(sh_data.get('f48', 0) / 100000000, 2)}亿" if sh_data else "N/A"
+        },
+        "raw_notice": "数据来源于东方财富原生实时数据接口"
+    }
+    
+    return market_summary
 
-    except Exception as e:
-        print(f"运行出现异常: {e}")
+# ---------------------------------------------------------
+# 2. AI 提示词与分析模块（输出 6 大模块 JSON）
+# ---------------------------------------------------------
+def generate_ai_analysis(market_data):
+    api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if not api_key or "your_api_key" in api_key:
+        print("\n【提示】未检测到有效 API Key，请在终端设置或在代码中填入真实 Key。")
+        return None
 
+    prompt = f"""
+你是一名专业的 A 股短线顶级游资与量化交易专家。请根据今日 market_data: {json.dumps(market_data, ensure_ascii=False)} 结合你对今日真实 A 股盘面的了解，对今日市场进行深度复盘。
 
-if __name__ == "__main__":
-    main()
+【严格要求】
+必须且仅输出标准的合法 JSON，绝对不要包含 ```json 等 Markdown 标记，JSON 结构必须严格包含以下 6 个模块：
+
+{{
+  "1_market_overview": {{
+    "index_summary": "指数涨跌细节与点位",
+    "turnover_total": "两市总成交额及增减量",
+    "up_down_count": "上涨/下跌家数比",
+    "limit_up_down": "涨停/跌停/炸板家数",
+    "market_strength": "强势/震荡/弱势/退潮"
+  }},
+  "2_emotion_cycle": {{
+    "yesterday_top_height": "昨日最高板表现",
+    "today_continuous_board": "今日连板梯队（如 4板, 3板, 2板）",
+    "bomb_rate": "炸板率 %",
+    "core_high_board": "核心高标龙头股票名称与代码",
+    "emotion_stage": "发酵/高潮/分歧/修复/退潮"
+  }},
+  "3_hot_sectors": [
+    {{
+      "sector_name": "板块名称",
+      "today_gain": "涨幅 %",
+      "turnover": "成交额",
+      "net_inflow": "资金净流入",
+      "dragon_leader": "龙头股",
+      "core_mid_army": "中军股",
+      "follow_up_tier": "补装/梯队股"
+    }}
+  ],
+  "4_stock_selection": {{
+    "strong_trend": ["强趋势股1", "强趋势股2"],
+    "volume_breakthrough": ["放量突破股1"],
+    "first_second_board": ["首板/二板潜力股"],
+    "pullback_low_buy": ["回踩低吸标的"],
+    "oversold_rebound": ["超跌反弹标的"]
+  }},
+  "5_news_events": {{
+    "policy": ["重要政策1"],
+    "company_announcements": ["公司重磅公告"],
+    "earnings": ["业绩预告/财报炒作"],
+    "industry_news": ["行业利好消息"],
+    "overseas_market": ["隔夜美股/外盘动态"]
+  }},
+  "6_next_day_strategy": {{
+    "strongest_direction": "次日最强主线方向",
+    "watch_stocks": ["重点观察股票代码/名称"],
+    "buy_conditions": "介入必须满足的确认条件",
+    "stop_loss": "止损位参考",
+    "take_profit": "止盈位参考",
+    "risk_warning": "明确风险提示"
+  }}
+}}
+"""
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": "你是一个严格输出纯 JSON 格式的专业 A 股量化复盘助手。"},
+            {"role": "user", "content": prompt}
+        ],
+        "temperature": 0.3
+    }
+
+    try:
+        url = "[https://api.deepseek.com/chat/completions](https://api.deepseek.com/chat/completions)"
+        res = requests.post(url, headers=headers, json=payload, timeout=60)
+        res_json = res.json()
+        
+        if "choices" not in res_json:
+            print("\
