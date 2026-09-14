@@ -6,31 +6,61 @@ import datetime
 # ---------------------------------------------------------
 # 1. 数据抓取模块（直接调用东方财富官方 REST 接口，保证稳定）
 # ---------------------------------------------------------
+# ---------------------------------------------------------
+# 1. 全量数据抓取模块（东方财富原生 REST 接口）
+# ---------------------------------------------------------
 def fetch_market_data():
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
     
-    # 获取上证指数行情
-    sh_index_url = "https://push2.eastmoney.com/api/qt/stock/get?secid=1.000001&fields=f43,f169,f170,f60,f44,f45,f46,f47,f48"
-    try:
-        sh_res = requests.get(sh_index_url, headers=headers, timeout=10).json()
-        sh_data = sh_res.get("data", {})
-    except Exception:
-        sh_data = {}
-    
     market_summary = {
         "date": datetime.datetime.now().strftime("%Y-%m-%d"),
-        "sh_index": {
-            "price": sh_data.get("f43", 0) / 100 if sh_data else "N/A",
-            "change_pct": sh_data.get("f170", 0) / 100 if sh_data else "N/A",
-            "turnover": f"{round(sh_data.get('f48', 0) / 100000000, 2)}亿" if sh_data else "N/A"
-        },
-        "raw_notice": "数据来源于东方财富原生实时数据接口"
+        "sh_index": {},
+        "market_stats": {},
+        "hot_sectors": []
     }
-    
-    return market_summary
 
+    try:
+        # 1. 抓取主要指数（上证、深证、创业板）
+        index_url = "https://push2.eastmoney.com/api/qt/ulist/get?fltt=2&invt=2&fields=f2,f3,f4,f12,f14,f48&secids=1.000001,0.399001,0.399006"
+        res = requests.get(index_url, headers=headers, timeout=10).json()
+        diff = res.get("data", {}).get("diff", [])
+        indices = {}
+        for item in diff:
+            name = item.get("f14")
+            indices[name] = {
+                "latest": item.get("f2", 0) / 100,
+                "change_pct": f"{item.get('f3', 0) / 100}%",
+                "turnover": f"{round(item.get('f48', 0) / 100000000, 2)}亿"
+            }
+        market_summary["sh_index"] = indices
+
+        # 2. 抓取全市场涨跌统计（涨家数、跌家数、平盘）
+        stat_url = "https://push2.eastmoney.com/api/qt/ulist/get?fltt=2&invt=2&fields=f104,f105,f106&secids=1.000001"
+        stat_res = requests.get(stat_url, headers=headers, timeout=10).json()
+        stat_data = stat_res.get("data", {}).get("diff", [{}])[0]
+        market_summary["market_stats"] = {
+            "up_count": stat_data.get("f104", 0),
+            "down_count": stat_data.get("f105", 0),
+            "flat_count": stat_data.get("f106", 0)
+        }
+
+        # 3. 抓取今日行业板块涨幅 Top 5（行业热点）
+        sector_url = "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=5&po=1&np=1&ut=bd1d9beb23081e7d01a3556f8f7eb48d&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f3,f12,f14,f62,f184"
+        sector_res = requests.get(sector_url, headers=headers, timeout=10).json()
+        sector_diff = sector_res.get("data", {}).get("diff", [])
+        for sec in sector_diff:
+            market_summary["hot_sectors"].append({
+                "sector_name": sec.get("f14"),
+                "today_gain": f"{sec.get('f3', 0) / 100}%",
+                "net_inflow": f"{round(sec.get('f62', 0) / 100000000, 2)}亿"
+            })
+
+    except Exception as e:
+        print(f"数据抓取出现部分异常（降级处理）: {e}")
+
+    return market_summary
 # ---------------------------------------------------------
 # 2. AI 提示词与分析模块（输出 6 大模块 JSON）
 # ---------------------------------------------------------
