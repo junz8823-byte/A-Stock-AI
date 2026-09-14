@@ -156,7 +156,7 @@ def generate_ai_analysis(market_data):
 
     try:
         # 正确的标准接口 URL
-        url = "[https://api.deepseek.com/chat/completions](https://api.deepseek.com/chat/completions)"
+        url = "https://api.deepseek.com/chat/completions"
         res = requests.post(url, headers=headers, json=payload, timeout=60)
         res_json = res.json()
         
