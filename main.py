@@ -4,9 +4,6 @@ import requests
 import datetime
 
 # ---------------------------------------------------------
-# 1. 数据抓取模块（直接调用东方财富官方 REST 接口，保证稳定）
-# ---------------------------------------------------------
-# ---------------------------------------------------------
 # 1. 全量数据抓取模块（东方财富原生 REST 接口）
 # ---------------------------------------------------------
 def fetch_market_data():
@@ -61,13 +58,14 @@ def fetch_market_data():
         print(f"数据抓取出现部分异常（降级处理）: {e}")
 
     return market_summary
+
 # ---------------------------------------------------------
 # 2. AI 提示词与分析模块（输出 6 大模块 JSON）
 # ---------------------------------------------------------
 def generate_ai_analysis(market_data):
     api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
     if not api_key or "your_api_key" in api_key:
-        print("\n【提示】未检测到有效 API Key，请在终端设置或在代码中填入真实 Key。")
+        print("未检测到有效的 DEEPSEEK_API_KEY！")
         return None
 
     prompt = f"""
@@ -147,4 +145,42 @@ def generate_ai_analysis(market_data):
         res_json = res.json()
         
         if "choices" not in res_json:
-            print("\
+            print("API 报错返回:", res_json)
+            return None
+            
+        content = res_json['choices'][0]['message']['content']
+        if "```" in content:
+            content = content.replace("```json", "").replace("```", "").strip()
+            
+        return json.loads(content)
+    except Exception as e:
+        print(f"代码运行报错: {e}")
+        return None
+
+# ---------------------------------------------------------
+# 3. 主流程与文件写入
+# ---------------------------------------------------------
+def main():
+    print("1. 开始抓取市场基础行情数据...")
+    raw_data = fetch_market_data()
+    
+    print("2. 正在调用 DeepSeek 进行 6 大模块复盘分析...")
+    ai_result = generate_ai_analysis(raw_data)
+    
+    if not ai_result:
+        print("分析生成失败！")
+        return
+
+    os.makedirs("data", exist_ok=True)
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    with open(f"data/{today_str}.json", "w", encoding="utf-8") as f:
+        json.dump(ai_result, f, ensure_ascii=False, indent=2)
+        
+    with open("data/latest.json", "w", encoding="utf-8") as f:
+        json.dump(ai_result, f, ensure_ascii=False, indent=2)
+        
+    print(f"成功保存至 data/{today_str}.json")
+
+if __name__ == "__main__":
+    main()
