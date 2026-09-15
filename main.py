@@ -10,10 +10,10 @@ app = Flask(__name__)
 # 获取环境变量中的 DeepSeek API Key
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY")
 
-# 全局缓存变量（避免频繁刷新浪费流量）
+# 全局缓存变量（缓存 30 分钟，避免重复调用 DeepSeek 浪费流量）
 cached_response = None
 last_fetch_time = 0
-CACHE_DURATION = 1800  # 缓存 30 分钟 (1800 秒)
+CACHE_DURATION = 1800  # 单位：秒
 
 def get_stock_data():
     """获取 A 股全市场实时行情并按成交额筛选标的"""
@@ -33,6 +33,7 @@ def get_stock_data():
         return stocks
     except Exception as e:
         print(f"抓取 akshare 数据异常: {e}")
+        # 降级备用数据
         return [
             {"name": "贵州茅台", "code": "600519", "rate": "+1.20%", "price": "1750.00", "desc": "白酒龙头，资金沉淀"},
             {"name": "宁德时代", "code": "300750", "rate": "+2.50%", "price": "180.50", "desc": "锂电龙头，底部放量"},
@@ -99,9 +100,9 @@ def get_stocks_api():
     global cached_response, last_fetch_time
     current_time = time.time()
 
-    # 30 分钟内再次请求，直接返回缓存，零消耗 DeepSeek 额度
+    # 30 分钟内触发请求，直接返回缓存，零消耗 DeepSeek 额度
     if cached_response and (current_time - last_fetch_time < CACHE_DURATION):
-        print("命中缓存，直接返回已生成数据")
+        print("命中缓存，直接返回历史数据")
         return jsonify(cached_response)
 
     try:
