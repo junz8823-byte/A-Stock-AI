@@ -3,12 +3,15 @@ import json
 import time
 import requests
 import datetime
+from flask import Flask, jsonify
+
+# 初始化 Flask 应用（Render 需要找到这个 app 对象）
+app = Flask(__name__)
 
 # ---------------------------------------------------------
-# 1. 全量数据抓取模块（实时接口 + 防缓存时间戳 + 10大反弹标的候选）
+# 1. 全量数据抓取模块
 # ---------------------------------------------------------
 def fetch_market_data():
-    # 1. 动态生成防缓存时间戳（规避 CDN 滞后数据）
     now_ts = int(time.time() * 1000)
     
     headers = {
@@ -26,7 +29,7 @@ def fetch_market_data():
     }
 
     try:
-        # 2. 抓取主要指数（上证、深证、创业板）
+        # 抓取主要指数
         index_url = f"https://push2.eastmoney.com/api/qt/ulist/get?fltt=2&invt=2&fields=f2,f3,f4,f12,f14,f48,f124&secids=1.000001,0.399001,0.399006&_={now_ts}"
         res = requests.get(index_url, headers=headers, timeout=10).json()
         diff = res.get("data", {}).get("diff", [])
@@ -40,7 +43,7 @@ def fetch_market_data():
             }
         market_summary["sh_index"] = indices
 
-        # 3. 抓取全市场实时涨跌家数
+        # 抓取全市场实时涨跌家数
         stat_url = f"https://push2.eastmoney.com/api/qt/ulist/get?fltt=2&invt=2&fields=f104,f105,f106&secids=1.000001&_={now_ts}"
         stat_res = requests.get(stat_url, headers=headers, timeout=10).json()
         stat_data = stat_res.get("data", {}).get("diff", [{}])[0]
@@ -50,7 +53,7 @@ def fetch_market_data():
             "flat_count": stat_data.get("f106", 0)
         }
 
-        # 4. 抓取今日行业板块涨幅 Top 5
+        # 抓取今日行业板块涨幅 Top 5
         sector_url = f"https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=5&po=1&np=1&ut=bd1d9beb23081e7d01a3556f8f7eb48d&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f3,f12,f14,f62&_={now_ts}"
         sector_res = requests.get(sector_url, headers=headers, timeout=10).json()
         sector_diff = sector_res.get("data", {}).get("diff", [])
@@ -61,7 +64,7 @@ def fetch_market_data():
                 "net_inflow": f"{round(sec.get('f62', 0) / 100000000, 2)}亿"
             })
 
-        # 5. 抓取【主力资金净流入前20】的筑底反弹备选标的，供 AI 精选 10 个
+        # 抓取筑底反弹备选标的
         rebound_url = f"https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=20&po=1&np=1&ut=bd1d9beb23081e7d01a3556f8f7eb48d&fltt=2&invt=2&fid=f62&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f12,f14,f2,f3,f8,f62,f184&_={now_ts}"
         rebound_res = requests.get(rebound_url, headers=headers, timeout=10).json()
         rebound_diff = rebound_res.get("data", {}).get("diff", [])
@@ -81,11 +84,11 @@ def fetch_market_data():
     return market_summary
 
 # ---------------------------------------------------------
-# 2. AI 提示词与分析模块（输出 10 个筑底反弹标的及 JSON 结构）
+# 2. AI 提示词与分析模块
 # ---------------------------------------------------------
 def generate_ai_analysis(market_data):
     api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
-    if not api_key or "your_api_key" in api_key:
+    if not api_key:
         print("未检测到有效的 DEEPSEEK_API_KEY！")
         return None
 
@@ -155,8 +158,7 @@ def generate_ai_analysis(market_data):
     }
 
     try:
-        # 正确的标准接口 URL
-        url = "https://api.deepseek.com/chat/completions"
+        url = "[https://api.deepseek.com/chat/completions](https://api.deepseek.com/chat/completions)"
         res = requests.post(url, headers=headers, json=payload, timeout=60)
         res_json = res.json()
         
@@ -174,29 +176,21 @@ def generate_ai_analysis(market_data):
         return None
 
 # ---------------------------------------------------------
-# 3. 主流程与本地文件保存
+# 3. 提供给微信小程序调用的 API 路由接口
 # ---------------------------------------------------------
-def main():
-    print("1. 开始抓取实时行情数据（含防缓存及反弹标的候选）...")
+@app.route('/')
+def home():
+    return "A-Stock-AI 服务正在运行中！"
+
+@app.route('/api/get-stocks', methods=['GET'])
+def get_stocks_api():
     raw_data = fetch_market_data()
-    
-    print("2. 正在调用 DeepSeek 生成 10 大筑底反弹标的与复盘...")
     ai_result = generate_ai_analysis(raw_data)
     
-    if not ai_result:
-        print("分析生成失败！")
-        return
-
-    os.makedirs("data", exist_ok=True)
-    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    
-    with open(f"data/{today_str}.json", "w", encoding="utf-8") as f:
-        json.dump(ai_result, f, ensure_ascii=False, indent=2)
-        
-    with open("data/latest.json", "w", encoding="utf-8") as f:
-        json.dump(ai_result, f, ensure_ascii=False, indent=2)
-        
-    print(f"成功更新并保存至 data/latest.json 及 data/{today_str}.json")
+    if ai_result:
+        return jsonify(ai_result)
+    else:
+        return jsonify({"error": "生成数据失败，请检查配置或 API Key"}), 500
 
 if __name__ == "__main__":
-    main()
+    app.run(host='0.0.0.0', port=5000)
