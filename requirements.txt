@@ -1,3 +1,5 @@
+flask
 akshare
+pandas
 openai
-requests
+gunicorn
