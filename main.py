@@ -64,12 +64,13 @@ def analyze_with_deepseek(stock_list):
 def index():
     return "API Running"
 
+# 关键修复：显式允许 POST 和 GET 方法
 @app.route("/api/get-stocks", methods=["POST", "GET"])
 def get_stocks_api():
     global cached_response, last_fetch_time
     current_time = time.time()
 
-    # 命中 30 分钟缓存，直接返回历史生成数据，不耗额度
+    # 命中 30 分钟缓存，防刷额度
     if cached_response and (current_time - last_fetch_time < CACHE_DURATION):
         return jsonify(cached_response)
 
