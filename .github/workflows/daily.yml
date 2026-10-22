@@ -1,9 +1,6 @@
 name: Daily A-Stock AI Analysis
 
 on:
-  schedule:
-    #  UTC 时间 07:30 相当于北京时间 15:30（股市收盘后自动运行）
-    - cron: '30 7 * * 1-5'
   workflow_dispatch: # 支持在 GitHub 页面上手动点击运行
 
 jobs:
